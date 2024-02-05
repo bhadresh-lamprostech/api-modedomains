@@ -1,105 +1,37 @@
-// const express = require("express");
-// const { ethers } = require("ethers");
-// const cors = require("cors"); // Import the cors middleware
-
-// const reverseRegistrarABI = require("./artifacts/contracts/registrar/ReverseRegistrar.sol/ReverseRegistrar.json");
-// const resolverABI = require("./artifacts/contracts/resolvers/Resolver.sol/Resolver.json");
-// const contractABI = require("./artifacts/contracts/base/Base.sol/Base.json");
-
-// const app = express();
-// app.use(cors());
-// const port = 3000;
-
-// app.get("/", (req, res) => {
-//   res.send("Welcome to the ModeDomains Token Metadata API!");
-// });
-
-// app.get("/getTokenURI/:address", async (req, res) => {
-//   const { address } = req.params;
-
-//   try {
-//     const ensName = await resolveAddressToENSName(address);
-//     const tokenUri = await getTokenURIFromENSName(ensName);
-
-//     res.json({ ensName, tokenUri });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// app.listen(port, () => {
-//   console.log(`Server is running on http://localhost:${port}`);
-// });
-
-// async function resolveAddressToENSName(address) {
-//   try {
-//     const providerUrl = "https://sepolia.mode.network/";
-
-//     const provider = new ethers.providers.JsonRpcProvider(providerUrl);
-
-//     const reverseRegistrar = new ethers.Contract(
-//       "0xF3087f9ad8718C28f4fe81C22b01cDfeca1FFbd5",
-//       reverseRegistrarABI.abi,
-//       provider
-//     );
-
-//     const reverseNode = await reverseRegistrar.node(address);
-
-//     if (reverseNode === ethers.constants.HashZero) {
-//       throw new Error(`No reverse resolution found for ${address}`);
-//     }
-
-//     const resolverContract = new ethers.Contract(
-//       "0xf675259f989f95e15d7923AccC6883D2e1fdd735",
-//       resolverABI.abi,
-//       provider
-//     );
-
-//     let ensName = await resolverContract.name(reverseNode);
-//     ensName = ensName.replace(".mode", "");
-
-//     return ensName;
-//   } catch (error) {
-//     throw new Error(`Error resolving address to ENS name: ${error.message}`);
-//   }
-// }
-
-// async function getTokenURIFromENSName(ensName) {
-//   try {
-//     const tokenId = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(ensName));
-//     const providerUrl = "https://sepolia.mode.network/";
-
-//     const provider = new ethers.providers.JsonRpcProvider(providerUrl);
-
-//     const contract = new ethers.Contract(
-//       "0xca3a57e014937c29526de98e4a8a334a7d04792b",
-//       contractABI.abi,
-//       provider
-//     );
-
-//     const tokenUri = await contract.tokenURI(tokenId);
-
-//     // Fetch the metadata
-//     const metadataResponse = await fetch(tokenUri);
-//     const metadata = await metadataResponse.json();
-
-//     // console.log(`Token URI for Token ID ${tokenId}: ${tokenUri}`);
-//     // console.log(`Metadata for Token ID ${tokenId}:`, metadata);
-
-//     return { tokenUri, metadata };
-//   } catch (error) {
-//     throw new Error(
-//       `Error getting token URI for ENS name ${ensName}: ${error.message}`
-//     );
-//   }
-// }
 const express = require("express");
 const ethers = require("ethers");
 const axios = require("axios");
 const cors = require("cors");
+const bodyParser = require("body-parser");
+const mongoose = require("mongoose");
+require("dotenv").config();
+const { google } = require("googleapis");
+
 const app = express();
 app.use(cors());
 const port = 3000;
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URL);
+
+// Define a schema for your data
+const dataSchema = new mongoose.Schema({
+  counter: {
+    type: Number,
+    default: 0,
+  },
+  name: String,
+  address: String,
+  dateTime: String,
+  transactionHash: String,
+  price: String,
+});
+
+// Create a model based on the schema, specifying the collection name
+const Data = mongoose.model("Data", dataSchema, "Transections");
+
+// Middleware to parse JSON
+app.use(bodyParser.json());
 
 // Replace these values with your actual contract details
 const baseContractAddress = "0xca3a57e014937c29526de98e4a8a334a7d04792b";
@@ -209,6 +141,79 @@ app.get("/api/mainnet/getAllDomains/:address", async (req, res) => {
     res.json(responseData);
   } catch (error) {
     console.error("Error:", error.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+async function updateGoogleSheet(data) {
+  try {
+    // Load credentials from your JSON file
+    const credentials = require("./credentials.json");
+
+    // Authenticate using the service account key
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+
+    // Get the sheets API instance
+    const sheetsApi = google.sheets({ version: "v4", auth });
+
+    // Specify the spreadsheetId and range
+    const spreadsheetId = "1eQme7gvcrLpKyulXjECp8c0xNK6af13QeFdn9rEpftk";
+    const range = "Sheet1"; // Update with your actual sheet name or range
+
+    // Convert data to a 2D array
+    const values = [
+      [data.name, data.address, data.dateTime, data.transactionHash],
+    ];
+
+    // Prepare request body
+    const request = {
+      spreadsheetId,
+      range,
+      valueInputOption: "RAW",
+      resource: { values },
+    };
+
+    // Update Google Sheet
+    const response = await sheetsApi.spreadsheets.values.append(request);
+    console.log("Google Sheet updated:", response.data);
+  } catch (error) {
+    console.error("Error updating Google Sheet:", error.message);
+    // Handle authentication errors or other issues here
+    throw error;
+  }
+}
+
+// API endpoint to store data
+app.post("/api/store-transection", async (req, res) => {
+  try {
+    const { name, address, dateTime, transactionHash, price } = req.body;
+
+    // Validate required fields
+    if (!name || !address || !dateTime || !transactionHash || !price) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+
+    // Create a new data object
+    const newData = new Data({
+      name,
+      address,
+      dateTime,
+      transactionHash,
+      price,
+    });
+
+    // Save the data to MongoDB
+    await newData.save();
+
+    await Data.updateOne({}, { $inc: { counter: 1 } });
+    await updateGoogleSheet(req.body);
+
+    res.status(201).json({ message: "Data stored successfully" });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
