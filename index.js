@@ -9,7 +9,7 @@ const { google } = require("googleapis");
 
 const app = express();
 app.use(cors());
-const port = 3000;
+const port = process.env.PORT;
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URL);
@@ -165,7 +165,13 @@ async function updateGoogleSheet(data) {
 
     // Convert data to a 2D array
     const values = [
-      [data.name, data.address, data.dateTime, data.transactionHash],
+      [
+        data.name,
+        data.address,
+        data.dateTime,
+        data.transactionHash,
+        data.price,
+      ],
     ];
 
     // Prepare request body
